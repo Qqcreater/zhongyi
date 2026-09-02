@@ -260,6 +260,26 @@ export default {
   overflow-y: auto;
   position: relative;
 }
+
+@media (max-width: 640px) {
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
+    gap: 12px;
+  }
+  .card {
+    padding: 14px;
+  }
+  .modal-mask {
+    align-items: flex-end;
+  }
+  .modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 88vh;
+    border-radius: 16px 16px 0 0;
+    padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+  }
+}
 .modal-close {
   position: absolute;
   top: 14px;

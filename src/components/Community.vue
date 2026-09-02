@@ -187,4 +187,14 @@ export default {
 .act.liked {
   color: #c0392b;
 }
+
+@media (max-width: 640px) {
+  .composer,
+  .post {
+    padding: 14px;
+  }
+  .post-actions {
+    gap: 14px;
+  }
+}
 </style>

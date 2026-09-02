@@ -293,4 +293,18 @@ export default {
   cursor: pointer;
   font-size: 13px;
 }
+
+@media (max-width: 640px) {
+  .store {
+    padding: 14px;
+  }
+  .booking {
+    padding: 16px 14px;
+  }
+  .bk-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+}
 </style>

@@ -201,4 +201,21 @@ export default {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+@media (max-width: 640px) {
+  .chat {
+    height: 62vh;
+    min-height: 380px;
+    padding: 12px;
+  }
+  .msg {
+    max-width: 88%;
+  }
+  .input-row input {
+    padding: 10px 12px;
+  }
+  .btn {
+    padding: 10px 16px;
+  }
+}
 </style>

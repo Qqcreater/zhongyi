@@ -35,6 +35,7 @@
     <!-- 主内容区 -->
     <main class="main">
       <header class="topbar">
+        <div class="topbar-brand">養</div>
         <div class="topbar-title">
           <span class="crumb">养生平台</span>
           <span class="crumb-sep">/</span>
@@ -55,6 +56,23 @@
         </keep-alive>
       </section>
     </main>
+
+    <!-- 手机底部导航 -->
+    <nav class="mobile-nav">
+      <button
+        v-for="m in modules"
+        :key="m.key"
+        class="mnav-item"
+        :class="{ active: current === m.key }"
+        @click="current = m.key"
+      >
+        <span class="mnav-icon">{{ m.icon }}</span>
+        <span class="mnav-label">{{ m.name }}</span>
+      </button>
+    </nav>
+
+    <!-- 全局浮动数字人助手 -->
+    <DigitalHuman />
   </div>
 </template>
 
@@ -87,7 +105,6 @@ export default {
         { key: 'courses', name: '养生课程', icon: '🧘', comp: 'HealthCourses' },
         { key: 'booking', name: '门店预约', icon: '📍', comp: 'StoreBooking' },
         { key: 'community', name: '互动社区', icon: '💬', comp: 'Community' },
-        { key: 'digital', name: '数字人', icon: '🤖', comp: 'DigitalHuman' },
         { key: 'ai', name: 'AI 助手', icon: '✨', comp: 'AiAssistant' }
       ]
     }
@@ -112,9 +129,19 @@ body {
   margin: 0;
   padding: 0;
   height: 100%;
+  -webkit-tap-highlight-color: transparent;
 }
 #app {
-  height: 100vh;
+  min-height: 100vh;
+}
+@supports (height: 100dvh) {
+  #app {
+    min-height: 100dvh;
+  }
+}
+button {
+  font-family: inherit;
+  touch-action: manipulation;
 }
 </style>
 
@@ -276,5 +303,101 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 26px 30px 40px;
+}
+
+/* 手机顶部品牌标识（仅移动端显示） */
+.topbar-brand {
+  display: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: #7fc8a9;
+  color: #1f3d34;
+  font-size: 18px;
+  font-weight: 700;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* 手机底部导航（仅移动端显示） */
+.mobile-nav {
+  display: none;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 100;
+  background: #fff;
+  border-top: 1px solid #e6ebe7;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.06);
+  padding: 5px 2px calc(5px + env(safe-area-inset-bottom));
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.mnav-item {
+  flex: 1;
+  min-width: 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 2px;
+  border: none;
+  background: transparent;
+  color: #8a9b93;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.mnav-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+.mnav-label {
+  font-size: 10px;
+  white-space: nowrap;
+}
+.mnav-item.active {
+  color: #2f5d50;
+  font-weight: 600;
+  background: #eef6f1;
+}
+
+/* ========== 手机适配 ========== */
+@media (max-width: 768px) {
+  .app-shell {
+    height: auto;
+    min-height: 100vh;
+  }
+  @supports (height: 100dvh) {
+    .app-shell {
+      min-height: 100dvh;
+    }
+  }
+  .sidebar {
+    display: none;
+  }
+  .topbar {
+    height: 54px;
+    padding: 0 12px;
+  }
+  .topbar-brand {
+    display: flex;
+    margin-right: 10px;
+  }
+  .search-box {
+    display: none;
+  }
+  .bell {
+    font-size: 20px;
+  }
+  .content {
+    overflow-y: visible;
+    padding: 14px 12px calc(84px + env(safe-area-inset-bottom));
+  }
+  .mobile-nav {
+    display: flex;
+    gap: 2px;
+  }
 }
 </style>

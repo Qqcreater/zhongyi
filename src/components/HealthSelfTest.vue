@@ -475,4 +475,19 @@ export default {
   font-size: 13px;
   margin-bottom: 12px;
 }
+
+@media (max-width: 640px) {
+  .panel {
+    padding: 16px 14px;
+  }
+  .voice-row {
+    flex-wrap: wrap;
+  }
+  .img-preview img {
+    max-width: 100%;
+  }
+  .result {
+    padding: 14px 12px;
+  }
+}
 </style>
