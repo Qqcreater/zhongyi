@@ -18,21 +18,29 @@
 
   <!-- 展开的聊天面板 -->
   <transition name="chat-fade">
-    <div v-show="expanded" class="chat-panel">
-      <div class="chat-head">
+    <div v-show="expanded"
+         ref="chatPanel"
+         class="chat-panel"
+         :style="panelStyle">
+      <div class="chat-head"
+           :class="{ drag: panelDragging }"
+           @mousedown.prevent="onPanelDragStart"
+           @touchstart.prevent="onPanelTouchStart"
+           title="按住拖动移动面板">
         <div class="chat-head-left">
           <img src="assets/xiaoyi.png" class="chat-head-avatar" alt="小颐" />
           <div>
             <div class="chat-head-name">小颐 <span class="online-dot"></span></div>
-            <div class="chat-head-sub">养生顾问 · 在线</div>
+            <div class="chat-head-sub">养生顾问 · 在线 <span class="drag-hint">💫 拖动头部可移动</span></div>
           </div>
         </div>
         <button class="chat-close" @click="toggle" title="收起">✕</button>
       </div>
 
       <div class="chat-status">
-        <span v-if="speaking">🔊 正在播报…</span>
-        <span v-else-if="recording">● 正在聆听（点击麦克风停止）</span>
+        <span v-if="aiCallStage">{{ aiCallStage }}</span>
+        <span v-else-if="speaking">🔊 正在播报…</span>
+        <span v-else-if="recording">● 正在聆听…说完点 ⏹ 停止，文字会填到输入框</span>
         <span v-else>👋 你好，我是小颐，有养生问题可以问我～</span>
       </div>
 
@@ -45,11 +53,9 @@
         >
           <img v-if="m.from === 'bot'" src="assets/xiaoyi.png" class="msg-avatar-img" alt="小颐" />
           <div class="msg-bubble">
+            <img v-if="m.image" :src="m.image" class="msg-image" alt="上传的图片" />
             {{ m.text }}
           </div>
-        </div>
-        <div v-if="interimText" class="msg msg-user">
-          <div class="msg-bubble interim">{{ interimText }}…</div>
         </div>
       </div>
 
@@ -60,24 +66,33 @@
         </button>
       </div>
 
+      <!-- 图片预览区 -->
+      <div v-if="pendingImage" class="pending-image-row">
+        <img :src="pendingImage" class="pending-thumb" alt="待发送图片" />
+        <span class="pending-name">{{ pendingFileName }}</span>
+        <button class="pending-clear" @click="clearPendingImage" title="移除图片">✕</button>
+      </div>
+
       <!-- 输入区 -->
       <div class="chat-input-bar">
-        <button
-          class="mic-btn"
-          :class="{ recording, disabled: !supportsSpeech }"
-          :title="recording ? '点击停止识别' : '点击开始语音识别'"
-          @click="toggleRecord"
-        >
+        <input
+          type="file"
+          accept="image/*"
+          class="hidden-file-input"
+          ref="fileInput"
+          @change="handleImage"
+        />
+        <button class="mic-btn" :class="{ recording, disabled: !supportsSpeech }"
+          :title="recording ? '点击停止识别' : '点击开始语音识别'" @click="toggleRecord">
           {{ recording ? '⏹' : '🎤' }}
         </button>
-        <input
-          v-model="inputText"
-          type="text"
-          class="chat-input"
-          placeholder="问我养生问题…"
-          @keyup.enter="send"
-        />
-        <button class="send-btn" @click="send">发送</button>
+        <button class="pic-btn" :disabled="aiThinking" title="上传图片给小颐"
+          @click="$refs.fileInput.click()">🖼️</button>
+        <input v-model="inputText" type="text" class="chat-input"
+          :class="{ recording }"
+          :placeholder="pendingImage ? '已选图片，加个描述后发送' : (recording ? '正在聆听…' : '问我养生问题…')"
+          @keyup.enter="send" />
+        <button class="send-btn" :disabled="aiThinking" @click="send">发送</button>
       </div>
 
       <div class="chat-footer">
@@ -150,12 +165,17 @@ export default {
       speaking: false,
       voiceOn: true,
       recording: false,
+      aiThinking: false,
+      aiCallStage: '',
       keepsSpeaking: null,
       recognition: null,
       keepListening: false,
       supportsSpeech: false,
       hasNewMsg: false,
       openTimer: null,
+      /* 图片上传 */
+      pendingImage: '',       // base64 data URL
+      pendingFileName: '',
       /* 拖拽状态 */
       isDragging: false,
       moved: false,
@@ -163,7 +183,15 @@ export default {
       startY: 0,
       offsetX: 0,
       offsetY: 0,
-      floatPos: null // { left, top } 自定义位置；null 表示用 CSS 默认（右下角）
+      floatPos: null, // { left, top } 自定义位置；null 表示用 CSS 默认（右下角）
+      /* 聊天面板拖拽 */
+      panelPos: null,
+      panelDragging: false,
+      panelMoved: false,
+      pStartX: 0,
+      pStartY: 0,
+      pOffsetX: 0,
+      pOffsetY: 0
     }
   },
   watch: {
@@ -178,17 +206,27 @@ export default {
     floatStyle() {
       if (!this.floatPos) return {}
       return { left: this.floatPos.left + 'px', top: this.floatPos.top + 'px' }
+    },
+    panelStyle() {
+      if (!this.panelPos) return {}
+      return { left: this.panelPos.left + 'px', top: this.panelPos.top + 'px', right: 'auto', bottom: 'auto' }
     }
   },
   created() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     this.supportsSpeech = !!SR
-    // 从 localStorage 恢复拖拽位置
     try {
       const saved = localStorage.getItem('zy_float_pos')
       if (saved) this.floatPos = JSON.parse(saved)
+      const savedPanel = localStorage.getItem('zy_panel_pos')
+      if (savedPanel) this.panelPos = JSON.parse(savedPanel)
+      // 恢复历史聊天记录（只存了文字，图片不持久化）
+      const savedChat = localStorage.getItem('zy_xiaoyi_chat')
+      if (savedChat) {
+        const arr = JSON.parse(savedChat)
+        if (Array.isArray(arr) && arr.length) this.messages = arr
+      }
     } catch (_) { /* noop */ }
-    // 首次进入自动提示
     setTimeout(() => {
       this.hasNewMsg = true
       setTimeout(() => { if (!this.expanded) this.hasNewMsg = false }, 3500)
@@ -199,6 +237,7 @@ export default {
     this.stopRecord()
     if (this.openTimer) clearTimeout(this.openTimer)
     this._cleanupDragListeners()
+    this._cleanupPanelDragListeners()
   },
   methods: {
     toggle() {
@@ -298,25 +337,382 @@ export default {
       window.removeEventListener('touchmove', this._onTouchMove)
       window.removeEventListener('touchend', this._onTouchEnd)
     },
+    /* ===== 聊天面板拖拽（拖头部） ===== */
+    onPanelDragStart(e) {
+      // 点到关闭按钮不拖
+      if (e.target.closest('.chat-close')) return
+      this.panelDragging = true
+      this.panelMoved = false
+      this.pStartX = e.clientX
+      this.pStartY = e.clientY
+      const rect = this.$refs.chatPanel.getBoundingClientRect()
+      if (!this.panelPos) this.panelPos = { left: rect.left, top: rect.top }
+      this.pOffsetX = this.pStartX - this.panelPos.left
+      this.pOffsetY = this.pStartY - this.panelPos.top
+      window.addEventListener('mousemove', this._onPanelDragMove)
+      window.addEventListener('mouseup', this._onPanelDragEnd)
+    },
+    _onPanelDragMove(e) {
+      const dx = e.clientX - this.pStartX
+      const dy = e.clientY - this.pStartY
+      if (!this.panelMoved && Math.abs(dx) + Math.abs(dy) > 5) this.panelMoved = true
+      const left = e.clientX - this.pOffsetX
+      const top = e.clientY - this.pOffsetY
+      this._applyPanelPos(left, top)
+    },
+    _onPanelDragEnd() {
+      this.panelDragging = false
+      window.removeEventListener('mousemove', this._onPanelDragMove)
+      window.removeEventListener('mouseup', this._onPanelDragEnd)
+      this._persistPanelPos()
+    },
+    onPanelTouchStart(e) {
+      if (e.target.closest('.chat-close')) return
+      const t = e.touches[0]
+      this.panelDragging = true
+      this.panelMoved = false
+      this.pStartX = t.clientX
+      this.pStartY = t.clientY
+      const rect = this.$refs.chatPanel.getBoundingClientRect()
+      if (!this.panelPos) this.panelPos = { left: rect.left, top: rect.top }
+      this.pOffsetX = t.clientX - this.panelPos.left
+      this.pOffsetY = t.clientY - this.panelPos.top
+      window.addEventListener('touchmove', this._onPanelTouchMove, { passive: false })
+      window.addEventListener('touchend', this._onPanelTouchEnd)
+    },
+    _onPanelTouchMove(e) {
+      e.preventDefault()
+      const t = e.touches[0]
+      const dx = t.clientX - this.pStartX
+      const dy = t.clientY - this.pStartY
+      if (!this.panelMoved && Math.abs(dx) + Math.abs(dy) > 5) this.panelMoved = true
+      const left = t.clientX - this.pOffsetX
+      const top = t.clientY - this.pOffsetY
+      this._applyPanelPos(left, top)
+    },
+    _onPanelTouchEnd() {
+      this.panelDragging = false
+      window.removeEventListener('touchmove', this._onPanelTouchMove)
+      window.removeEventListener('touchend', this._onPanelTouchEnd)
+      this._persistPanelPos()
+    },
+    _applyPanelPos(left, top) {
+      const el = this.$refs.chatPanel
+      if (!el) return
+      const w = el.offsetWidth
+      const h = el.offsetHeight
+      const maxL = Math.max(0, window.innerWidth - w)
+      const maxT = Math.max(0, window.innerHeight - h)
+      const clampedL = Math.max(0, Math.min(maxL, left))
+      const clampedT = Math.max(0, Math.min(maxT, top))
+      this.panelPos = { left: clampedL, top: clampedT }
+    },
+    _persistPanelPos() {
+      if (!this.panelPos) return
+      try { localStorage.setItem('zy_panel_pos', JSON.stringify(this.panelPos)) } catch (_) { /* noop */ }
+    },
+    _cleanupPanelDragListeners() {
+      window.removeEventListener('mousemove', this._onPanelDragMove)
+      window.removeEventListener('mouseup', this._onPanelDragEnd)
+      window.removeEventListener('touchmove', this._onPanelTouchMove)
+      window.removeEventListener('touchend', this._onPanelTouchEnd)
+    },
     scrollBottom() {
       const box = this.$refs.chatBox
       if (box) box.scrollTop = box.scrollHeight
     },
-    pushMsg(from, text) {
-      this.messages.push({ from, text })
+    pushMsg(from, text, image) {
+      const msg = { from, text: text || '' }
+      if (image) msg.image = image
+      this.messages.push(msg)
       this.hasNewMsg = !this.expanded && from === 'bot'
       this.$nextTick(() => this.scrollBottom())
+      this.saveChat()
     },
-    ask(t) {
-      this.pushMsg('user', t.q)
-      this.reply(t.a)
+    /* 持久化聊天记录：只存文字（图片 base64 太大），最多 50 条 */
+    saveChat() {
+      try {
+        const plain = this.messages.slice(-50).map(m => ({ from: m.from, text: m.text || '' }))
+        localStorage.setItem('zy_xiaoyi_chat', JSON.stringify(plain))
+      } catch (_) { /* 存储满等情况忽略 */ }
     },
     send() {
       const text = (this.inputText || '').trim()
-      if (!text) return
+      if (!text && !this.pendingImage) return
+      if (this.aiThinking) return
+      const image = this.pendingImage || ''
       this.inputText = ''
-      this.pushMsg('user', text)
-      this.reply(this.matchKB(text))
+      this.pushMsg('user', text || '帮我看看这张图片～', image)
+      this.pendingImage = ''
+      this.pendingFileName = ''
+      this.aiReply(text || '帮我看看这张图片里有什么？', image)
+    },
+    ask(t) {
+      if (this.aiThinking) return
+      this.pushMsg('user', t.q)
+      this.aiReply(t.q)
+    },
+
+    /* 压缩图片到最大边 1024px + 转 base64 data URL（JPEG 0.85） */
+    compressImage(file, maxSide = 1024, quality = 0.85) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = (e) => {
+          const img = new Image()
+          img.onload = () => {
+            let { width, height } = img
+            if (width > maxSide || height > maxSide) {
+              if (width >= height) {
+                height = Math.round(height * (maxSide / width))
+                width = maxSide
+              } else {
+                width = Math.round(width * (maxSide / height))
+                height = maxSide
+              }
+            }
+            const canvas = document.createElement('canvas')
+            canvas.width = width
+            canvas.height = height
+            const ctx = canvas.getContext('2d')
+            ctx.drawImage(img, 0, 0, width, height)
+            resolve(canvas.toDataURL('image/jpeg', quality))
+          }
+          img.onerror = reject
+          img.src = e.target.result
+        }
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+    },
+    async handleImage(e) {
+      const file = e.target.files && e.target.files[0]
+      if (!file) return
+      if (!file.type.startsWith('image/')) {
+        alert('只能上传图片文件哦～')
+        return
+      }
+      try {
+        const dataUrl = await this.compressImage(file)
+        this.pendingImage = dataUrl
+        this.pendingFileName = file.name
+        // 重置 input，允许重复选同一张图
+        e.target.value = ''
+      } catch (err) {
+        console.error('[小颐] 图片处理失败', err)
+        alert('图片读取失败，请换一张试试')
+      }
+    },
+    clearPendingImage() {
+      this.pendingImage = ''
+      this.pendingFileName = ''
+      if (this.$refs.fileInput) this.$refs.fileInput.value = ''
+    },
+
+    /* 智能提取 DeepSeek 响应里的文字内容（兼容 string / multimodal-array / 空但有 reasoning） */
+    _extractContent(data) {
+      const msg = data?.choices?.[0]?.message
+      if (!msg) return ''
+      // 1) 纯 string
+      if (typeof msg.content === 'string' && msg.content) return msg.content
+      // 2) 新版 multimodal：[{type:'text', text:'...'}]
+      if (Array.isArray(msg.content)) {
+        const pieces = []
+        for (const seg of msg.content) {
+          if (!seg) continue
+          if (typeof seg === 'string') pieces.push(seg)
+          else if (seg.type === 'text' && seg.text) pieces.push(seg.text)
+        }
+        const joined = pieces.join('').trim()
+        if (joined) return joined
+      }
+      // 3) reasoning_content 兜底
+      if (typeof msg.reasoning_content === 'string' && msg.reasoning_content) {
+        return msg.reasoning_content
+      }
+      return ''
+    },
+
+    /* 调用智谱 —— 有图时 glm-4.6v-flash 优先，无图时 glm-4.7 优先 */
+    async aiReply(userText, imageUrl = '') {
+      this.aiThinking = true
+      const hasImage = !!imageUrl
+      // history 永远用 string（保证纯文本模型能读），图片换成占位描述
+      const history = this.messages
+        .filter(m => m.text || m.image)
+        .slice(-10)
+        .map(m => {
+          if (m.from === 'user' && m.image) {
+            const text = m.text ? m.text + '（用户上传了一张图片）' : '（用户上传了一张图片，请结合上下文分析）'
+            return { role: 'user', content: text }
+          }
+          return {
+            role: m.from === 'user' ? 'user' : 'assistant',
+            content: m.text || ''
+          }
+        })
+      const API_KEY = 'sk-5f223cfad7fa435da12b65e7d109e715'
+      const buildHeaders = () => ({
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + API_KEY
+      })
+      // 候选模型：有图时视觉模型优先，无图时文本模型优先
+      const candidates = hasImage
+        ? [
+            { endpoint: 'https://api.deepseek.com/chat/completions', model: 'deepseek-v4-flash-vision-exp', label: '直连·V4-Flash-Vision', vision: true },
+            { endpoint: '/ds-api/chat/completions', model: 'deepseek-v4-flash-vision-exp', label: '代理·V4-Flash-Vision', vision: true },
+            { endpoint: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash', label: '直连·Flash(兜底)', vision: false },
+            { endpoint: '/ds-api/chat/completions', model: 'deepseek-flash', label: '代理·Flash(兜底)', vision: false }
+          ]
+        : [
+            { endpoint: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash', label: '直连·Flash', vision: false },
+            { endpoint: '/ds-api/chat/completions', model: 'deepseek-flash', label: '代理·Flash', vision: false }
+          ]
+      const MAX_RETRIES = 3
+      let lastStatus = 0
+      let lastErrMsg = ''
+      let replyText = ''
+      let finalLabel = ''
+
+      outer: for (let ci = 0; ci < candidates.length; ci++) {
+        const { endpoint, model, label, vision } = candidates[ci]
+        // 按模型能力重建 messages：V 模型用数组 content + 视觉 prompt；纯文本模型用 string content + 把图片转占位
+        let currentUserContent
+        let currentSystem
+        if (vision && hasImage) {
+          // V 模型 + 当前有图 → 数组 content
+          currentUserContent = [
+            ...(userText ? [{ type: 'text', text: userText }] : []),
+            { type: 'image_url', image_url: { url: imageUrl } }
+          ]
+          currentSystem = '你是「小颐」，一位专业的中医养生顾问。用户可能上传了一张图片（如舌苔、皮肤、食物、场景等），请结合图片内容和用户问题进行中医角度的分析与建议。要求：\n1. 先简要描述你看到的图片内容\n2. 结合中医理论给出针对性的养生建议\n3. 包含食疗、穴位、起居、运动等建议\n4. 用 emoji 和换行让排版清晰\n5. 回答控制在300字以内'
+        } else if (!vision && hasImage) {
+          // 纯文本模型 + 当前有图 → string content（把图片描述成占位，模型看不到图但不会 400）
+          const desc = userText ? userText + '（用户同时上传了一张图片，我无法直接看到图片内容，请基于文本给出建议，并提醒用户描述图片细节或换个时间再试）' : '（用户上传了一张图片，但我目前无法直接看图，请让用户描述图片内容，我再给出建议）'
+          currentUserContent = desc
+          currentSystem = '你是「小颐」，一位专业的中医养生顾问。请用亲切温和的语气回答用户的养生健康问题。要求：\n1. 结合中医理论与现代健康知识\n2. 回答简洁实用，用 emoji 和换行让排版清晰\n3. 包含食疗建议、穴位按摩、起居调养、运动建议等\n4. 回答控制在200字以内\n5. 如果用户问的不是养生健康问题，温和地引导回养生话题\n6. 提到具体穴位时请标注大致位置'
+        } else {
+          // 纯文本模型 + 纯文本 → string content（普通情况）
+          currentUserContent = userText || ''
+          currentSystem = '你是「小颐」，一位专业的中医养生顾问。请用亲切温和的语气回答用户的养生健康问题。要求：\n1. 结合中医理论与现代健康知识\n2. 回答简洁实用，用 emoji 和换行让排版清晰\n3. 包含食疗建议、穴位按摩、起居调养、运动建议等\n4. 回答控制在200字以内\n5. 如果用户问的不是养生健康问题，温和地引导回养生话题\n6. 提到具体穴位时请标注大致位置'
+        }
+        const messages = [
+          { role: 'system', content: currentSystem },
+          ...history,
+          { role: 'user', content: currentUserContent }
+        ]
+        const payload = {
+          model,
+          messages,
+          temperature: 0.7,
+          max_tokens: 800,
+          stream: false
+        }
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+          try {
+            if (attempt === 0) this.aiCallStage = `🤔 ${label}（第${attempt+1}次）`
+            else this.aiCallStage = `🤔 ${label} 第${attempt+1}次…`
+
+            console.log('[小颐][AI] →', label, 'attempt', attempt+1, 'model=', model)
+            const res = await fetch(endpoint, {
+              method: 'POST',
+              headers: buildHeaders(),
+              body: JSON.stringify(payload),
+              cache: 'no-store'
+            })
+            lastStatus = res.status
+            let body = null
+            try { body = await res.json() } catch (_) { body = null }
+            console.log('[小颐][AI] ←', label, 'HTTP=', lastStatus, 'body=', body ? {
+              hasChoices: !!body.choices,
+              choice0MsgType: body?.choices?.[0]?.message ? typeof body.choices[0].message.content : undefined,
+              errCode: body?.error?.code,
+              errMsg: body?.error?.message
+            } : 'NO_JSON')
+
+            // 429：指数退避，在当前候选内重试
+            if (res.status === 429) {
+              const errMsg = body?.error?.message || ''
+              lastErrMsg = errMsg
+              const retryAfterHeader = res.headers.get('Retry-After') || res.headers.get('retry-after')
+              let retryMs
+              if (retryAfterHeader && !isNaN(parseInt(retryAfterHeader, 10))) {
+                retryMs = parseInt(retryAfterHeader, 10) * 1000 + 500
+              } else {
+                retryMs = Math.max(2, Math.pow(2, attempt + 2)) * 1000
+              }
+              if (attempt < MAX_RETRIES - 1) {
+                this.aiCallStage = `🤕 ${label} 限流，${(retryMs/1000).toFixed(0)}s 后第${attempt+2}次…`
+                await new Promise(r => setTimeout(r, retryMs))
+                continue
+              }
+              console.log('[小颐][AI] ' + label + ' 429 重试耗尽，跳下一个候选')
+              continue outer
+            }
+
+            // 401/403/400：不再换 model 继续浪费（Key 本身有问题），直接全停
+            if (res.status === 401 || res.status === 403 || res.status === 400) {
+              if (body?.error) lastErrMsg = body.error.message || body.error
+              break outer
+            }
+
+            if (!res.ok) {
+              if (body?.error) lastErrMsg = body.error.message || body.error
+              // 5xx / 其它：试下一轮
+              continue
+            }
+
+            // 200：尝试提取 content（兼容 string / multimodal-array / reasoning）
+            const extracted = body ? this._extractContent(body) : ''
+            if (extracted) {
+              replyText = extracted
+              finalLabel = label
+              break outer
+            }
+            lastErrMsg = '响应 200 但 choices.message.content 为空（已兼容 string/数组/reasoning）'
+            console.log('[小颐][AI] 200 但无内容，body=', body ? JSON.stringify(body).slice(0, 600) : null)
+            // 200 但内容空：这种大概率是接口数据格式变化，试换下一个模型
+            continue outer
+          } catch (err) {
+            lastStatus = -1
+            lastErrMsg = (err && err.message) || 'Network/CORS Error'
+            console.warn('[小颐][AI] catch', label, err && err.message)
+            break outer  // 抓异常说明网络/CORS，再试代理
+          }
+        }
+      }
+
+      if (replyText) {
+        this.aiCallStage = `✅ 调用成功 · ${finalLabel}（${replyText.length}字）`
+        this.reply(replyText)
+      } else {
+        let hint = ''
+        if (lastStatus === 429) {
+          hint = '🤕 DeepSeek 全部链路限流。\n建议稍后再试，或登录 https://platform.deepseek.com/ 查看额度。'
+          if (lastErrMsg) hint += `\n服务端错误：${lastErrMsg}`
+          hint += '\n\n'
+        } else if (lastStatus === 401 || lastStatus === 403) {
+          hint = '🔑 API Key 无效或已过期。\n'
+          if (lastErrMsg) hint += `服务端：${lastErrMsg}\n`
+          hint += '请登录 https://platform.deepseek.com/api_keys 检查 Key 是否启用、是否还有额度。\n\n'
+        } else if (lastStatus === 400) {
+          hint = `⚠️ 请求格式错误（400）`
+          if (lastErrMsg) hint += `：${lastErrMsg}`
+          hint += '\n\n'
+        } else if (lastStatus >= 500) {
+          hint = `💥 DeepSeek 服务器异常（HTTP ${lastStatus}），请稍后再试。\n\n`
+        } else if (lastStatus === -1) {
+          hint = `🌐 网络/CORS 错误：${lastErrMsg || '未知'}。\n开发环境确认 vue.config.js 代理已生效；线上部署需要 nginx 反代 /ds-api/。\n\n`
+        } else {
+          hint = `⚠️ 未收到有效回答（HTTP ${lastStatus}）。`
+          if (lastErrMsg) hint += ` ${lastErrMsg}`
+          hint += '\n浏览器 Console 有 [小颐][AI] 调试日志，可截图发我排查。\n\n'
+        }
+        const fallback = this.matchKB(userText)
+        this.aiCallStage = `⚠️ 调用失败（HTTP ${lastStatus}），切本地知识库`
+        this.reply(hint + '—— 以下为本地养生知识库回答 ——\n\n' + fallback)
+      }
+      setTimeout(() => { this.aiCallStage = '' }, 8000)
+      this.aiThinking = false
     },
     matchKB(text) {
       let best = null
@@ -334,13 +730,12 @@ export default {
       return best ? best.reply : FALLBACK_REPLY
     },
     reply(text) {
-      setTimeout(() => {
-        this.pushMsg('bot', text)
-        this.speak(text)
-      }, 300)
+      this.pushMsg('bot', text)
+      this.speak(text)
     },
     clearChat() {
       this.messages = [{ from: 'bot', text: '对话已清空～有什么问题随时问我 🌿' }]
+      try { localStorage.removeItem('zy_xiaoyi_chat') } catch (_) { /* noop */ }
     },
     /* 语音识别 */
     toggleRecord() {
@@ -358,6 +753,8 @@ export default {
         rec.lang = 'zh-CN'
         rec.interimResults = true
         rec.continuous = true
+        // 保留输入框已有文字作为基础
+        this._voiceBase = this.inputText || ''
         rec.onresult = (e) => {
           let interim = ''
           let final = ''
@@ -366,14 +763,13 @@ export default {
             if (e.results[i].isFinal) final += t
             else interim += t
           }
-          this.interimText = interim
           if (final) {
-            this.interimText = ''
-            const text = final.trim()
-            if (text) {
-              this.pushMsg('user', text)
-              this.reply(this.matchKB(text))
-            }
+            this._voiceBase += final
+          }
+          const newText = this._voiceBase + interim
+          // 只在有内容时更新，防止 stop 后空结果覆盖输入框
+          if (newText) {
+            this.inputText = newText
           }
         }
         rec.onerror = (e) => {
@@ -386,7 +782,6 @@ export default {
             try { rec.start() } catch (_) { /* noop */ }
           } else {
             this.recording = false
-            this.interimText = ''
           }
         }
         this.recognition = rec
@@ -405,7 +800,8 @@ export default {
         this.recognition = null
       }
       this.recording = false
-      this.interimText = ''
+      // 保留 inputText 中的识别文字，不清除 _voiceBase
+      // _voiceBase 会在下次 startRecord 时重置
     },
     /* 语音播报 */
     speak(text) {
@@ -516,6 +912,9 @@ export default {
   flex-direction: column;
   overflow: hidden;
   z-index: 300;
+  /* 拖到自定义位置时保持大小 */
+  min-width: 400px;
+  min-height: 560px;
 }
 .chat-fade-enter-active,
 .chat-fade-leave-active {
@@ -535,6 +934,18 @@ export default {
   background: linear-gradient(135deg, #2f5d50, #3e7a68);
   color: #fff;
   flex-shrink: 0;
+  cursor: grab;
+  user-select: none;
+}
+.chat-head.drag {
+  cursor: grabbing;
+  transition: none;
+}
+.drag-hint {
+  opacity: 0.75;
+  font-weight: 400;
+  font-size: 11px;
+  margin-left: 4px;
 }
 .chat-head-left {
   display: flex;
@@ -661,6 +1072,55 @@ export default {
 }
 .topic-chip:hover { background: #eef6f1; }
 
+/* ===== 图片上传相关 ===== */
+.hidden-file-input { display: none; }
+.pic-btn {
+  width: 38px; height: 38px;
+  border: none; background: transparent;
+  font-size: 22px; cursor: pointer;
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .15s;
+  flex-shrink: 0;
+}
+.pic-btn:hover:not(:disabled) { background: #eef6f1; }
+.pic-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.pending-image-row {
+  display: flex; align-items: center; gap: 10px;
+  margin: 4px 12px 0; padding: 8px 10px;
+  background: #f1f8f4; border-radius: 10px;
+  border: 1px dashed #bfe0cf;
+}
+.pending-thumb {
+  width: 56px; height: 56px; object-fit: cover;
+  border-radius: 8px; flex-shrink: 0;
+  border: 1px solid #d8e8df;
+}
+.pending-name {
+  flex: 1; font-size: 12px; color: #3a6a58;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pending-clear {
+  width: 22px; height: 22px;
+  border-radius: 50%; border: none;
+  background: #c94b4b; color: #fff;
+  font-size: 12px; line-height: 1;
+  cursor: pointer; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.pending-clear:hover { background: #a33a3a; }
+
+.msg-image {
+  display: block;
+  max-width: 100%;
+  max-height: 180px;
+  border-radius: 10px;
+  margin-bottom: 6px;
+  border: 1px solid #d8e8df;
+  cursor: zoom-in;
+}
+
 .chat-input-bar {
   display: flex;
   gap: 8px;
@@ -699,6 +1159,15 @@ export default {
   outline: none;
 }
 .chat-input:focus { border-color: #7fc8a9; }
+.chat-input.recording {
+  border-color: #c0392b;
+  background: #fef5f4;
+  animation: rec-input-pulse 1.2s infinite;
+}
+@keyframes rec-input-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(192,57,43,0); }
+  50%      { box-shadow: 0 0 0 3px rgba(192,57,43,0.15); }
+}
 .send-btn {
   padding: 0 16px;
   height: 38px;

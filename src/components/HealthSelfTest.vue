@@ -37,9 +37,10 @@
           rows="4"
           placeholder="语音转写内容或出现识别结果后将显示在这里…"
         ></textarea>
-        <button class="btn" :disabled="!voiceText" @click="analyzeText(voiceText, 'voice')">
-          分析语音自述
+        <button class="btn" :disabled="!voiceText || aiLoading" @click="analyzeText(voiceText, 'voice')">
+          {{ aiLoading ? 'AI 分析中…' : '分析语音自述' }}
         </button>
+        <div v-if="aiLoading" class="stage-tip">{{ aiStage }}</div>
       </section>
 
       <!-- 文字 -->
@@ -52,9 +53,10 @@
           rows="5"
           placeholder="请输入您的健康困扰…"
         ></textarea>
-        <button class="btn primary" :disabled="!textInput" @click="analyzeText(textInput, 'text')">
-          生成健康建议
+        <button class="btn primary" :disabled="!textInput || aiLoading" @click="analyzeText(textInput, 'text')">
+          {{ aiLoading ? 'AI 分析中…' : '生成健康建议' }}
         </button>
+        <div v-if="aiLoading" class="stage-tip">{{ aiStage }}</div>
       </section>
 
       <!-- 图片 -->
@@ -65,10 +67,13 @@
           <input type="file" accept="image/*" @change="onImage" />
           <span>📷 选择图片</span>
         </label>
-        <div v-if="imageUrl" class="img-preview">
-          <img :src="imageUrl" alt="预览" />
+        <div v-if="imagePreviewUrl" class="img-preview">
+          <img :src="imagePreviewUrl" alt="预览" />
         </div>
-        <button class="btn primary" :disabled="!imageUrl" @click="analyzeImage">分析图片</button>
+        <button class="btn primary" :disabled="!imageUrl || aiLoading" @click="analyzeImage">
+          {{ aiLoading ? 'AI 看图中…' : 'AI 分析图片' }}
+        </button>
+        <div v-if="aiLoading" class="stage-tip">{{ aiStage }}</div>
       </section>
 
       <!-- 实时人脸 -->
@@ -84,8 +89,9 @@
           <button class="btn primary" @click="toggleCamera">
             {{ cameraOn ? '⏹ 关闭摄像头' : '📹 开启摄像头' }}
           </button>
-          <button class="btn" :disabled="!cameraOn" @click="captureFace">📸 抓拍并分析</button>
+          <button class="btn" :disabled="!cameraOn || aiLoading" @click="captureFace">📸 {{ aiLoading ? 'AI 分析中…' : '抓拍并 AI 分析' }}</button>
         </div>
+        <div v-if="aiLoading" class="stage-tip">{{ aiStage }}</div>
         <div v-if="!supportsCamera" class="warn">当前环境不支持摄像头访问（需 HTTPS 或 localhost）。</div>
       </section>
 
@@ -102,14 +108,21 @@
 </template>
 
 <script>
+import { callAI, compressImage } from '@/utils/aiService'
+
+/* 关键词匹配（AI 调用失败时的本地兜底，同时用于生成 resultTags） */
 const KEYWORDS = [
-  { words: ['失眠', '睡不着', '睡不好'], tag: '睡眠障碍', tip: '建议睡前 1 小时远离电子屏幕，可饮用温热的酸枣仁茶。' },
-  { words: ['疲劳', '乏力', '没精神', '累'], tag: '气虚疲劳', tip: '注意规律作息，适当增加红枣、山药等补气食材。' },
-  { words: ['头痛', '头晕'], tag: '头部不适', tip: '保证充足饮水与通风，持续头痛请及时就医。' },
-  { words: ['胃口', '食欲不振', '吃不下'], tag: '脾胃偏弱', tip: '少食生冷，可用陈皮、茯苓煮水健脾。' },
-  { words: ['焦虑', '压力大', '烦躁', '紧张'], tag: '情绪紧张', tip: '尝试每日 10 分钟冥想或八段锦放松练习。' },
-  { words: ['咳嗽', '咽干', '喉咙'], tag: '肺燥', tip: '多喝温水，可食用雪梨、百合润肺。' },
-  { words: ['怕冷', '手脚凉'], tag: '阳虚', tip: '注意保暖，适量食用羊肉、生姜温补。' }
+  { words: ['失眠', '睡不着', '睡不好'], tag: '睡眠障碍' },
+  { words: ['疲劳', '乏力', '没精神', '累'], tag: '气虚疲劳' },
+  { words: ['头痛', '头晕'], tag: '头部不适' },
+  { words: ['胃口', '食欲不振', '吃不下'], tag: '脾胃偏弱' },
+  { words: ['焦虑', '压力大', '烦躁', '紧张'], tag: '情绪紧张' },
+  { words: ['咳嗽', '咽干', '喉咙'], tag: '肺燥' },
+  { words: ['怕冷', '手脚凉'], tag: '阳虚' },
+  { words: ['舌苔', '舌象'], tag: '舌象观察' },
+  { words: ['皮肤', '面色'], tag: '面色观察' },
+  { words: ['痘痘', '长痘', '痤疮'], tag: '皮肤问题' },
+  { words: ['眼', '眼圈', '干涩'], tag: '眼周状态' }
 ]
 
 export default {
@@ -126,7 +139,8 @@ export default {
       recording: false,
       voiceText: '',
       textInput: '',
-      imageUrl: '',
+      imageUrl: '',          // base64 data URL（传给 AI 用）
+      imagePreviewUrl: '',   // 页面预览用的 objectURL
       result: '',
       resultTitle: '',
       resultTags: [],
@@ -135,22 +149,21 @@ export default {
       rafId: null,
       recognition: null,
       supportsSpeech: 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window,
-      supportsCamera: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+      supportsCamera: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+      aiLoading: false,
+      aiStage: ''
     }
   },
   beforeUnmount() {
     this.stopVoice()
     this.stopCamera()
+    if (this.imagePreviewUrl) URL.revokeObjectURL(this.imagePreviewUrl)
   },
   methods: {
     /* ---------- 语音 ---------- */
     toggleVoice() {
       if (!this.supportsSpeech) return
-      if (this.recording) {
-        this.stopVoice()
-      } else {
-        this.startVoice()
-      }
+      if (this.recording) this.stopVoice(); else this.startVoice()
     },
     startVoice() {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition
@@ -163,63 +176,77 @@ export default {
         for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript
         this.voiceText = txt
       }
-      this.recognition.onend = () => {
-        this.recording = false
-      }
+      this.recognition.onend = () => { this.recording = false }
       this.recognition.start()
       this.recording = true
     },
     stopVoice() {
       if (this.recognition) {
-        try {
-          this.recognition.stop()
-        } catch (e) {
-          /* noop */
-        }
+        try { this.recognition.stop() } catch (_) { /* ignore */ }
       }
       this.recording = false
     },
 
-    /* ---------- 图片 ---------- */
-    onImage(e) {
+    /* ---------- 图片（上传 → 压缩 base64） ---------- */
+    async onImage(e) {
       const file = e.target.files[0]
       if (!file) return
-      this.imageUrl = URL.createObjectURL(file)
-    },
-    analyzeImage() {
-      this.resultTitle = '图片'
-      this.result =
-        '【模拟识别】已接收图像。参考建议：请结合舌象、面色综合判断；日常保持饮食清淡、作息规律，异常变化建议咨询专业医师。'
-      this.resultTags = ['图像已接收', '建议面诊复核']
+      if (this.imagePreviewUrl) URL.revokeObjectURL(this.imagePreviewUrl)
+      this.imagePreviewUrl = URL.createObjectURL(file)
+      try {
+        this.imageUrl = await compressImage(file)
+      } catch (err) {
+        alert('图片处理失败，请换一张')
+        this.imagePreviewUrl = ''
+      }
     },
 
-    /* ---------- 文本分析（语音/文字共用） ---------- */
-    analyzeText(text, source) {
-      const matched = []
-      KEYWORDS.forEach((k) => {
-        if (k.words.some((w) => text.includes(w))) matched.push(k)
-      })
-      if (matched.length === 0) {
-        this.resultTitle = source === 'voice' ? '语音' : '文字'
-        this.result =
-          '未匹配到明显健康信号。请继续保持规律作息、均衡饮食与适度运动，并定期自测。'
-        this.resultTags = ['状态平稳']
-        return
-      }
+    /* ---------- 文本分析（语音/文字共用） → 调大模型 ---------- */
+    async analyzeText(text, source) {
+      if (!text || this.aiLoading) return
       this.resultTitle = source === 'voice' ? '语音' : '文字'
-      this.result =
-        '根据您的描述，识别到以下信号：\n' +
-        matched.map((m) => `· ${m.tag}：${m.tip}`).join('\n')
-      this.resultTags = matched.map((m) => m.tag)
+      this.aiLoading = true
+      this.aiStage = '准备分析…'
+      const fallbackKB = this._localKBFallback(text)
+      const system = '你是一位专业的中医健康评估师。用户通过语音或文字描述了自己的身体症状，请从中医角度进行辨证分析。\n要求：\n1. 先列出你识别到的主要症状（用 emoji + 短词）\n2. 给出可能的中医证型判断\n3. 从食疗、穴位、起居、运动四个维度给出具体建议\n4. 整体控制在 300 字以内\n5. 排版清晰，不要用 Markdown 标题'
+      const result = await callAI({
+        messages: [{ role: 'user', content: text }],
+        system,
+        onStage: (s) => { this.aiStage = s },
+        fallback: fallbackKB
+      })
+      this.aiLoading = false
+      this.result = result.text || fallbackKB
+      this.resultTags = this._extractTags(text)
+    },
+
+    /* ---------- 图片分析 → V 模型（有图必走 4.6v-flash） ---------- */
+    async analyzeImage() {
+      if (!this.imageUrl || this.aiLoading) return
+      this.resultTitle = '图片'
+      this.aiLoading = true
+      this.aiStage = 'AI 看图中…'
+      const system = '你是一位专业的中医健康评估师，擅长从舌象、面色、皮肤、饮食等照片中提取健康线索。请先描述你看到的图片内容，再结合中医理论给出辨证分析与建议。要求：\n1. 先简要描述图片（是舌象 / 面色 / 皮肤 / 食物 / 其他）\n2. 列出你观察到的特征（如舌苔厚薄、舌质颜色、面色明暗、皮肤有无异常等）\n3. 给出可能的健康倾向（中医证型）\n4. 从食疗、穴位、起居、运动四个维度给出具体建议\n5. 最后温馨提示：AI 分析仅供参考，异常请及时就医\n6. 控制在 350 字以内，排版清晰用 emoji'
+      const result = await callAI({
+        messages: [
+          { role: 'user', content: [
+            { type: 'text', text: '请帮我分析这张图片的健康线索' },
+            { type: 'image_url', image_url: { url: this.imageUrl } }
+          ] }
+        ],
+        system,
+        imageUrl: this.imageUrl,
+        onStage: (s) => { this.aiStage = s },
+        fallback: '图片分析暂时失败。你可以尝试重新上传清晰的照片，或者直接用「文字描述」说出你的症状，我来帮你分析～'
+      })
+      this.aiLoading = false
+      this.result = result.text || '图片分析暂时失败，请稍后再试。'
+      this.resultTags = ['AI 看图', '建议面诊复核']
     },
 
     /* ---------- 实时人脸 ---------- */
     async toggleCamera() {
-      if (this.cameraOn) {
-        this.stopCamera()
-      } else {
-        await this.startCamera()
-      }
+      if (this.cameraOn) { this.stopCamera() } else { await this.startCamera() }
     },
     async startCamera() {
       try {
@@ -234,10 +261,7 @@ export default {
       }
     },
     stopCamera() {
-      if (this.mediaStream) {
-        this.mediaStream.getTracks().forEach((t) => t.stop())
-        this.mediaStream = null
-      }
+      if (this.mediaStream) { this.mediaStream.getTracks().forEach(t => t.stop()); this.mediaStream = null }
       if (this.rafId) cancelAnimationFrame(this.rafId)
       this.rafId = null
       this.cameraOn = false
@@ -251,33 +275,68 @@ export default {
       const ctx = canvas.getContext('2d')
       const loop = () => {
         ctx.clearRect(0, 0, w, h)
-        // 模拟人脸检测框（可用 face-api.js 替换）
-        const bw = w * 0.42
-        const bh = h * 0.6
+        const bw = w * 0.42, bh = h * 0.6
         const bx = w / 2 - bw / 2 + Math.sin(Date.now() / 600) * 6
         const by = h / 2 - bh / 2
-        ctx.strokeStyle = '#7fc8a9'
-        ctx.lineWidth = 3
+        ctx.strokeStyle = '#7fc8a9'; ctx.lineWidth = 3
         ctx.strokeRect(bx, by, bw, bh)
         ctx.fillStyle = 'rgba(127,200,169,0.15)'
         ctx.fillRect(bx, by, bw, bh)
-        ctx.font = '13px sans-serif'
-        ctx.fillStyle = '#7fc8a9'
+        ctx.font = '13px sans-serif'; ctx.fillStyle = '#7fc8a9'
         ctx.fillText('Face · 检测中…', bx, by - 8)
         this.rafId = requestAnimationFrame(loop)
       }
       loop()
     },
-    captureFace() {
-      const fatigue = 40 + Math.floor(Math.random() * 45)
-      const focus = 55 + Math.floor(Math.random() * 40)
+
+    /* 抓拍 → 把当前 video 画面转 base64 → 调大模型（V 模型看人脸） */
+    async captureFace() {
+      if (!this.cameraOn || this.aiLoading) return
+      const video = this.$refs.video
+      if (!video) return
+      // 用 video 当前帧导出 base64（压缩到 640 宽）
+      const snapCanvas = document.createElement('canvas')
+      const maxW = 640
+      snapCanvas.width = Math.min(maxW, video.videoWidth || maxW)
+      snapCanvas.height = Math.round(snapCanvas.width * (video.videoHeight / (video.videoWidth || 1)))
+      snapCanvas.getContext('2d').drawImage(video, 0, 0, snapCanvas.width, snapCanvas.height)
+      const faceB64 = snapCanvas.toDataURL('image/jpeg', 0.85)
+
       this.resultTitle = '人脸'
-      this.result =
-        `【模拟检测】实时抓拍完成。\n` +
-        `疲劳指数：${fatigue}/100（${fatigue > 70 ? '偏高，建议休息' : '正常'}）\n` +
-        `专注度：${focus}/100\n` +
-        `面色参考：红润度良好。请结合自感状态综合判断。`
-      this.resultTags = ['人脸已抓拍', `疲劳 ${fatigue}`, `专注 ${focus}`]
+      this.aiLoading = true
+      this.aiStage = 'AI 分析面相中…'
+      const system = '你是一位结合现代视觉与中医面诊理论的健康评估师。用户刚刚上传了一张实时抓拍的人像照片（可能是面色、面部表情或皮肤状态）。请结合图片内容给出中医面诊角度的分析。要求：\n1. 先描述你看到的面部特征（面色明暗、有无光泽、是否疲劳、眼周状态、皮肤情况等）\n2. 结合中医面诊理论，给出可能的脏腑倾向（面白→气虚、面红→实热、面黄→脾虚湿困、面色晦暗→瘀滞等）\n3. 给出 3-5 条具体调养建议\n4. 最后温馨提示：AI 分析仅供参考，持续异常请及时就医\n5. 控制在 300 字以内，排版清晰用 emoji'
+      const result = await callAI({
+        messages: [
+          { role: 'user', content: [
+            { type: 'text', text: '请帮我分析这张抓拍人像的面色与健康线索' },
+            { type: 'image_url', image_url: { url: faceB64 } }
+          ] }
+        ],
+        system,
+        imageUrl: faceB64,
+        onStage: (s) => { this.aiStage = s },
+        fallback: '人脸抓拍分析暂时失败。你可以先做个简单的自我观察：\n· 看看自己的面色是偏红润、偏白、偏黄还是偏暗\n· 观察眼周是否有黑眼圈、眼袋\n· 感受近期是否容易疲劳、焦虑或失眠\n\n把这些描述写在「文字」页，我来帮你进一步分析～'
+      })
+      this.aiLoading = false
+      this.result = result.text || '人脸抓拍分析暂时失败，请稍后再试。'
+      this.resultTags = ['AI 面相', '建议面诊复核']
+    },
+
+    /* ---------- 工具方法 ---------- */
+    _extractTags(text) {
+      const matched = KEYWORDS.filter(k => k.words.some(w => text.includes(w)))
+      if (matched.length) return matched.map(m => m.tag)
+      return ['状态平稳']
+    },
+    _localKBFallback(text) {
+      const matched = KEYWORDS.filter(k => k.words.some(w => text.includes(w)))
+      if (matched.length === 0) {
+        return '未匹配到明显健康信号。请继续保持规律作息、均衡饮食与适度运动，并定期自测。'
+      }
+      return '根据你的描述，可能涉及：\n' +
+        matched.map(m => `· ${m.tag}`).join('\n') +
+        '\n建议保持规律作息、均衡饮食，症状持续请及时就医。'
     }
   }
 }
@@ -363,6 +422,15 @@ export default {
   background: #c0392b;
   border-color: #c0392b;
   color: #fff;
+}
+.stage-tip {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #7fc8a9;
+  background: #f1f8f4;
+  border-radius: 6px;
+  padding: 6px 10px;
+  display: inline-block;
 }
 .voice-row {
   display: flex;
