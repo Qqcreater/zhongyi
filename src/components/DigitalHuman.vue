@@ -11,102 +11,217 @@
     @click="onClickToggle"
     title="小颐 · 养生顾问"
   >
-    <img src="assets/xiaoyi.png" alt="小颐" draggable="false" />
+    <!-- 小颐形象（保持原图）+ 基础动作：点头 / 歪头 / 说话点头 / 倾听前倾 / 呼吸 -->
+    <div class="xy-anim" :class="animClass">
+      <img src="assets/xiaoyi.png" alt="小颐" draggable="false" />
+    </div>
     <span v-if="recording" class="floating-badge rec">●</span>
     <span v-else-if="hasNewMsg" class="floating-badge dot"></span>
+    <!-- 录音声波指示 -->
+    <div v-if="recording" class="xy-soundbars">
+      <i></i><i></i><i></i>
+    </div>
+    <!-- AI 思考气泡 -->
+    <div v-if="aiThinking" class="xy-think-bubble">···</div>
   </div>
 
-  <!-- 展开的聊天面板 -->
+  <!-- 展开的数字人对话工作台（三栏：形象 / 对话 / 辅助） -->
   <transition name="chat-fade">
     <div v-show="expanded"
          ref="chatPanel"
          class="chat-panel"
          :style="panelStyle">
+      <!-- 顶部标题栏（拖拽把手） -->
       <div class="chat-head"
            :class="{ drag: panelDragging }"
            @mousedown.prevent="onPanelDragStart"
            @touchstart.prevent="onPanelTouchStart"
            title="按住拖动移动面板">
         <div class="chat-head-left">
-          <img src="assets/xiaoyi.png" class="chat-head-avatar" alt="小颐" />
+          <span class="head-ico">🧑‍⚕️</span>
           <div>
-            <div class="chat-head-name">小颐 <span class="online-dot"></span></div>
-            <div class="chat-head-sub">养生顾问 · 在线 <span class="drag-hint">💫 拖动头部可移动</span></div>
+            <div class="chat-head-name">小颐 · 数字人工作台</div>
+            <div class="chat-head-sub">养生顾问 <span class="drag-hint">💫 拖动顶部可移动</span></div>
           </div>
         </div>
         <button class="chat-close" @click="toggle" title="收起">✕</button>
       </div>
 
-      <div class="chat-status">
-        <span v-if="aiCallStage">{{ aiCallStage }}</span>
-        <span v-else-if="speaking">🔊 正在播报…</span>
-        <span v-else-if="recording">● 正在聆听…说完点 ⏹ 停止，文字会填到输入框</span>
-        <span v-else>👋 你好，我是小颐，有养生问题可以问我～</span>
-      </div>
-
-      <div class="chat-body" ref="chatBox">
-        <div
-          v-for="(m, i) in messages"
-          :key="i"
-          class="msg"
-          :class="m.from === 'user' ? 'msg-user' : 'msg-bot'"
-        >
-          <img v-if="m.from === 'bot'" src="assets/xiaoyi.png" class="msg-avatar-img" alt="小颐" />
-          <div class="msg-bubble">
-            <img v-if="m.image" :src="m.image" class="msg-image" alt="上传的图片" />
-            {{ m.text }}
+      <div class="dh-layout">
+        <!-- 左栏：数字人形象 -->
+        <aside class="dh-left">
+          <div class="dh-card-head">
+            <span>🧑‍⚕️ 数字人交互</span>
+            <span class="dh-online">在线</span>
           </div>
-        </div>
-      </div>
+          <div class="dh-stage">
+              <div class="xy-anim" :class="animClass" :style="{ opacity: avatarOpacity / 100 }">
+                <div class="xy-fig">
+                  <img src="assets/xiaoyi_front.png" alt="小颐数字人" draggable="false" />
+                  <!-- 讲话时的半身数字人视频：Canvas 按轮廓遮罩实时合成，与全身立绘对齐 -->
+                  <canvas v-show="speaking" ref="talkCanvas" class="xy-talk" width="636" height="606"></canvas>
+                  <video ref="talkVideo" class="xy-talk-src" src="assets/xiaoyi_talk.webm?v=2"
+                         muted loop playsinline preload="auto"></video>
+                </div>
+              </div>
+            <span v-if="speaking" class="dh-stage-tag">🔊 播报中</span>
+            <span v-else-if="recording" class="dh-stage-tag rec">● 聆听中</span>
+            <span v-else-if="aiThinking" class="dh-stage-tag think">💭 思考中</span>
+          </div>
+          <div class="dh-ctrl">
+            <div class="dh-opacity-row">
+              <span class="dh-ctrl-label">👁 透明度</span>
+              <input type="range" min="30" max="100" v-model.number="avatarOpacity" class="dh-range" />
+              <span class="dh-ctrl-val">{{ avatarOpacity }}%</span>
+            </div>
+            <div class="dh-actions">
+              <button class="dh-act-btn" @click="greet">👋 打招呼</button>
+              <button class="dh-act-btn" @click="_nodOnce">🙂 点头</button>
+            </div>
+          </div>
+        </aside>
 
-      <!-- 快捷话题 -->
-      <div class="quick-topics">
-        <button v-for="t in topics" :key="t.q" class="topic-chip" @click="ask(t)">
-          {{ t.q }}
-        </button>
-      </div>
+        <!-- 中栏：对话主区 -->
+        <section class="dh-main">
+          <div class="dh-main-head">
+            <span class="dh-main-title">养生对话框</span>
+            <span class="dh-conn"><i class="dot"></i> 数字人已连接</span>
+            <div class="dh-main-tools">
+              <button class="dh-tool" :class="{ on: voiceOn }" @click="voiceOn = !voiceOn"
+                :title="voiceOn ? '关闭语音朗读' : '开启语音朗读'">
+                🔊 语音朗读{{ voiceOn ? '开' : '关' }}
+              </button>
+              <button class="dh-tool" @click="stopSpeak" title="停止播报">⏹</button>
+              <button class="dh-tool" @click="clearChat" title="清空对话">🗑</button>
+              <button class="dh-tool" :class="{ on: !!ttsCfg }" @click="openTtsSettings"
+                :title="ttsCfg ? '当前音色：豆包 TTS' : '当前音色：浏览器语音，点击可配置豆包 TTS'">🎙</button>
+            </div>
+          </div>
 
-      <!-- 图片预览区 -->
-      <div v-if="pendingImage" class="pending-image-row">
-        <img :src="pendingImage" class="pending-thumb" alt="待发送图片" />
-        <span class="pending-name">{{ pendingFileName }}</span>
-        <button class="pending-clear" @click="clearPendingImage" title="移除图片">✕</button>
-      </div>
+          <div class="dh-status">
+            <span v-if="aiCallStage">{{ aiCallStage }}</span>
+            <span v-else-if="speaking">🔊 正在播报…</span>
+            <span v-else-if="recording">● 正在聆听…说完点「停止录音」，文字会留在下方识别区</span>
+            <span v-else>👋 你好，我是小颐，打字 / 语音 / 传图都可以～</span>
+          </div>
 
-      <!-- 输入区 -->
-      <div class="chat-input-bar">
-        <input
-          type="file"
-          accept="image/*"
-          class="hidden-file-input"
-          ref="fileInput"
-          @change="handleImage"
-        />
-        <button class="mic-btn" :class="{ recording, disabled: !supportsSpeech }"
-          :title="recording ? '点击停止识别' : '点击开始语音识别'" @click="toggleRecord">
-          {{ recording ? '⏹' : '🎤' }}
-        </button>
-        <button class="pic-btn" :disabled="aiThinking" title="上传图片给小颐"
-          @click="$refs.fileInput.click()">🖼️</button>
-        <input v-model="inputText" type="text" class="chat-input"
-          :class="{ recording }"
-          :placeholder="pendingImage ? '已选图片，加个描述后发送' : (recording ? '正在聆听…' : '问我养生问题…')"
-          @keyup.enter="send" />
-        <button class="send-btn" :disabled="aiThinking" @click="send">发送</button>
-      </div>
+          <div class="chat-body" ref="chatBox">
+            <div
+              v-for="(m, i) in messages"
+              :key="i"
+              class="msg"
+              :class="m.from === 'user' ? 'msg-user' : 'msg-bot'"
+            >
+              <img v-if="m.from === 'bot'" src="assets/xiaoyi_front.png" class="msg-avatar-img" alt="小颐" />
+              <div class="msg-bubble">
+                <img v-if="m.image" :src="m.image" class="msg-image" alt="上传的图片" />
+                {{ m.text }}
+              </div>
+            </div>
+          </div>
 
-      <div class="chat-footer">
-        <label class="switch">
-          <input type="checkbox" v-model="voiceOn" /> 语音播报
-        </label>
-        <button class="mini-btn" @click="stopSpeak">⏹ 停播</button>
-        <button class="mini-btn" @click="clearChat">🗑 清空</button>
+          <!-- 语音识别结果 / 输入区 -->
+          <div class="dh-asr" :class="{ active: recording }">
+            <div class="dh-asr-head">
+              <span>🎤 语音识别结果</span>
+              <div class="dh-asr-tools">
+                <input
+                  type="file"
+                  accept="image/*"
+                  class="hidden-file-input"
+                  ref="fileInput"
+                  @change="handleImage"
+                />
+                <button class="dh-mini" :disabled="aiThinking" @click="$refs.fileInput.click()" title="上传图片给小颐">🖼️</button>
+                <button class="dh-mini" @click="inputText = ''" title="清空输入">清空</button>
+              </div>
+            </div>
+            <textarea
+              v-model="inputText"
+              class="dh-asr-text"
+              rows="2"
+              :placeholder="pendingImage ? '已选图片，可补充描述后发送…' : (recording ? '正在聆听…' : '语音识别结果会显示在这里，也可以直接打字（Enter 发送）…')"
+              @keydown.enter.exact.prevent="send"
+            ></textarea>
+          </div>
+
+          <!-- 图片预览区 -->
+          <div v-if="pendingImage" class="pending-image-row">
+            <img :src="pendingImage" class="pending-thumb" alt="待发送图片" />
+            <span class="pending-name">{{ pendingFileName }}</span>
+            <button class="pending-clear" @click="clearPendingImage" title="移除图片">✕</button>
+          </div>
+
+          <!-- 主操作按钮 -->
+          <div class="dh-btn-row">
+            <button class="dh-btn rec" :class="{ stop: recording, disabled: !supportsSpeech }"
+              :title="recording ? '点击停止识别' : '点击开始语音识别'" @click="toggleRecord">
+              {{ recording ? '⏹ 停止录音' : '🎤 开始录音' }}
+            </button>
+            <button class="dh-btn send" :disabled="aiThinking" @click="send">📨 发送</button>
+          </div>
+
+          <!-- 豆包 TTS 音色设置浮层 -->
+          <div v-if="showTtsSettings" class="tts-mask" @click.self="showTtsSettings = false">
+            <div class="tts-pop">
+              <div class="tts-pop-head">
+                <span>🎙 音色设置</span>
+                <button class="tts-close" @click="showTtsSettings = false">✕</button>
+              </div>
+              <p class="tts-tip">配置后小颐将使用豆包（火山引擎 TTS）声音；未配置时自动使用浏览器中文女声。</p>
+              <label class="tts-field">
+                <span>AppID</span>
+                <input v-model.trim="ttsForm.appid" type="text" placeholder="火山引擎 TTS AppID" />
+              </label>
+              <label class="tts-field">
+                <span>Access Token</span>
+                <input v-model.trim="ttsForm.token" type="password" placeholder="火山引擎 TTS Access Token" />
+              </label>
+              <label class="tts-field">
+                <span>音色</span>
+                <select v-model="ttsForm.voice">
+                  <option v-for="v in doubaoVoices" :key="v.id" :value="v.id">{{ v.name }}</option>
+                </select>
+              </label>
+              <div class="tts-actions">
+                <button class="tts-btn ghost" @click="clearTts">恢复浏览器音色</button>
+                <button class="tts-btn primary" @click="saveTts">保存</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 右栏：辅助信息 -->
+        <aside class="dh-right">
+          <div class="dh-side-card grow">
+            <div class="dh-side-head">⚡ 快捷话题</div>
+            <div class="dh-topics">
+              <button v-for="t in topics" :key="t.q" class="dh-topic" @click="ask(t)">{{ t.q }}</button>
+            </div>
+          </div>
+          <div class="dh-side-card">
+            <div class="dh-side-head">🌿 日常养生要点</div>
+            <ul class="dh-tips">
+              <li>尽量 23 点前入睡，不熬夜</li>
+              <li>三餐规律，七分饱，少冰少炸</li>
+              <li>每天微汗运动 30 分钟</li>
+              <li>少生气少焦虑，情志舒畅</li>
+              <li>久坐 45 分钟起身活动</li>
+            </ul>
+          </div>
+          <div class="dh-side-card">
+            <div class="dh-side-head">📟 服务状态</div>
+            <div class="dh-status-line">{{ aiThinking ? '🤔 AI 分析中…' : (speaking ? '🔊 语音播报中' : (recording ? '🎤 语音识别中' : '✅ 待命中')) }}</div>
+          </div>
+        </aside>
       </div>
     </div>
   </transition>
 </template>
 
 <script>
+import { speakText, stopText, loadTtsConfig, saveTtsConfig, DOUBAO_VOICES } from '../utils/ttsService'
+
 const TOPICS = [
   { q: '失眠怎么办？', a: '【失眠调理】中医认为失眠多与心肝火旺、心脾两虚有关。\n🌙 起居：睡前1小时远离手机，用40℃温水泡脚15分钟；\n🍵 食疗：酸枣仁莲子粥、桂圆百合汤助眠；\n💆 穴位：按揉神门穴、内关穴各3分钟；\n🧘 配合「睡前正念冥想」课程效果更佳。' },
   { q: '脾胃不好吃什么？', a: '【脾胃调理】脾主运化，胃主受纳，脾胃不和则百病生。\n🍲 食疗：四神汤（茯苓、莲子、芡实、山药）健脾祛湿；小米南瓜粥养胃；\n💆 穴位：常按足三里、中脘穴，饭后顺时针摩腹36圈；\n🚫 忌：生冷瓜果、肥甘厚腻、暴饮暴食；\n🧘 建议：每餐七分饱，细嚼慢咽。' },
@@ -164,6 +279,11 @@ export default {
       interimText: '',
       speaking: false,
       voiceOn: true,
+      /* TTS 音色设置（豆包 / 浏览器回退） */
+      showTtsSettings: false,
+      ttsCfg: null,
+      ttsForm: { appid: '', token: '', cluster: 'volcano_tts', voice: DOUBAO_VOICES[0].id },
+      doubaoVoices: DOUBAO_VOICES,
       recording: false,
       aiThinking: false,
       aiCallStage: '',
@@ -173,6 +293,9 @@ export default {
       supportsSpeech: false,
       hasNewMsg: false,
       openTimer: null,
+      /* 数字人动作状态 */
+      headAction: '',      // 头部动作：nod / tilt / ''
+      avatarOpacity: 100,  // 工作台左栏形象透明度（30~100）
       /* 图片上传 */
       pendingImage: '',       // base64 data URL
       pendingFileName: '',
@@ -200,12 +323,26 @@ export default {
         this.hasNewMsg = false
         this.$nextTick(() => this.scrollBottom())
       }
+    },
+    /* 播报开始/结束：启动或停止半身讲话视频合成 */
+    speaking(val) {
+      if (val) this._startTalkVideo()
+      else this._stopTalkVideo()
     }
   },
   computed: {
     floatStyle() {
       if (!this.floatPos) return {}
       return { left: this.floatPos.left + 'px', top: this.floatPos.top + 'px' }
+    },
+    /* 形象动作类：说话点头 > 录音前倾 > 随机点头/歪头 */
+    animClass() {
+      return {
+        nod: this.headAction === 'nod' && !this.speaking && !this.recording,
+        tilt: this.headAction === 'tilt' && !this.speaking && !this.recording,
+        talking: this.speaking,
+        listening: this.recording
+      }
     },
     panelStyle() {
       if (!this.panelPos) return {}
@@ -232,19 +369,119 @@ export default {
       setTimeout(() => { if (!this.expanded) this.hasNewMsg = false }, 3500)
     }, 1500)
   },
+  mounted() {
+    // 读取豆包 TTS 配置 + 启动随机小动作（点头/歪头）
+    this.ttsCfg = loadTtsConfig()
+    this._scheduleIdle()
+    this._initTalkVideo()
+  },
   beforeUnmount() {
     this.stopSpeak()
     this.stopRecord()
+    this._stopTalkVideo()
     if (this.openTimer) clearTimeout(this.openTimer)
     this._cleanupDragListeners()
     this._cleanupPanelDragListeners()
+    // 清理数字人动作定时器
+    if (this._idleTimer) clearTimeout(this._idleTimer)
+    if (this._headTimer) clearTimeout(this._headTimer)
   },
   methods: {
     toggle() {
       this.expanded = !this.expanded
-      if (!this.expanded) {
+      if (this.expanded) {
+        this._nodOnce() // 点开对话点头回应
+      } else {
         this.stopSpeak()
         this.stopRecord()
+      }
+    },
+    /* ===== 数字人动作 ===== */
+    /* 初始化讲话视频资源：把黑白轮廓遮罩转换为「alpha 遮罩」（白=不透明身体，黑=透明背景） */
+    _initTalkVideo() {
+      this._talkRaf = 0
+      this._talkAmp = 0
+      this._maskCanvas = null
+      const img = new Image()
+      img.onload = () => {
+        const mc = document.createElement('canvas')
+        mc.width = img.width
+        mc.height = img.height
+        const mctx = mc.getContext('2d')
+        mctx.drawImage(img, 0, 0)
+        const imgData = mctx.getImageData(0, 0, mc.width, mc.height)
+        const px = imgData.data
+        // canvas 合成只认 alpha：把亮度直接写入 alpha 通道
+        for (let i = 0; i < px.length; i += 4) px[i + 3] = px[i]
+        mctx.putImageData(imgData, 0, 0)
+        this._maskCanvas = mc
+      }
+      img.src = 'assets/xiaoyi_talk_matte.png'
+    },
+    /* 播报中：播放半身讲话视频，按 alpha 遮罩实时合成到 canvas（背景透明，露出下层全身立绘） */
+    _startTalkVideo() {
+      const canvas = this.$refs.talkCanvas
+      const video = this.$refs.talkVideo
+      if (!canvas || !video) return
+      const ctx = canvas.getContext('2d')
+      try { video.currentTime = 0 } catch (_) { /* noop */ }
+      const p = video.play()
+      if (p) p.catch(() => {})
+      const loop = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+        if (this._maskCanvas && video.readyState >= 2) {
+          // 语速跟随语音振幅：音量大→口型切换快（1.0~1.8 倍），静音段也保持持续张合
+          const amp = this._talkAmp || 0
+          const target = 1.0 + amp * 0.8
+          video.playbackRate += (target - video.playbackRate) * 0.2
+          ctx.drawImage(this._maskCanvas, 0, 0, canvas.width, canvas.height)
+          ctx.globalCompositeOperation = 'source-in'
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+          ctx.globalCompositeOperation = 'source-over'
+        }
+        this._talkRaf = requestAnimationFrame(loop)
+      }
+      this._talkRaf = requestAnimationFrame(loop)
+    },
+    /* 停止讲话视频：暂停、清空画布，恢复静态全身立绘 */
+    _stopTalkVideo() {
+      if (this._talkRaf) cancelAnimationFrame(this._talkRaf)
+      this._talkRaf = 0
+      this._talkAmp = 0
+      const video = this.$refs.talkVideo
+      if (video) {
+        video.pause()
+        video.playbackRate = 1
+      }
+      const canvas = this.$refs.talkCanvas
+      if (canvas) {
+        const ctx = canvas.getContext('2d')
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+      }
+    },
+    /* 待机小动作：每 6~11s 随机点头或歪头 */
+    _scheduleIdle() {
+      this._idleTimer = setTimeout(() => {
+        if (!this.expanded && !this.speaking && !this.recording && !this.aiThinking) {
+          this.headAction = Math.random() < 0.5 ? 'nod' : 'tilt'
+          if (this._headTimer) clearTimeout(this._headTimer)
+          this._headTimer = setTimeout(() => { this.headAction = '' }, 1200)
+        }
+        this._scheduleIdle()
+      }, 6000 + Math.random() * 5000)
+    },
+    /* 点头一次（点击回应） */
+    _nodOnce() {
+      this.headAction = 'nod'
+      if (this._headTimer) clearTimeout(this._headTimer)
+      this._headTimer = setTimeout(() => { this.headAction = '' }, 1000)
+    },
+    /* 打招呼：点头 + 播报欢迎语（避免重复刷屏） */
+    greet() {
+      this._nodOnce()
+      const greeted = this.messages.some(m => m.text.indexOf('你好呀～我是养生顾问小颐') !== -1)
+      if (!greeted) {
+        this.reply('你好呀～我是养生顾问小颐 🌿\n可以打字、语音或传图问我养生问题哦～')
       }
     },
     onClickToggle() {
@@ -803,21 +1040,37 @@ export default {
       // 保留 inputText 中的识别文字，不清除 _voiceBase
       // _voiceBase 会在下次 startRecord 时重置
     },
-    /* 语音播报 */
+    /* 语音播报（豆包 TTS 优先，回退浏览器语音） */
     speak(text) {
       this.stopSpeak()
-      if (!this.voiceOn || !('speechSynthesis' in window)) return
-      const plain = text.replace(/\n/g, '。')
-      const u = new SpeechSynthesisUtterance(plain.slice(0, 180))
-      u.lang = 'zh-CN'
-      u.onstart = () => { this.speaking = true }
-      u.onend = () => { this.speaking = false }
-      u.onerror = () => { this.speaking = false }
-      speechSynthesis.speak(u)
+      if (!this.voiceOn) return
+      const plain = text.replace(/\n/g, '。').slice(0, 180)
+      speakText(plain, {
+        onStart: () => { this.speaking = true },
+        onEnd: () => { this.speaking = false },
+        onAmp: v => { this._talkAmp = v }
+      })
     },
     stopSpeak() {
-      if ('speechSynthesis' in window) speechSynthesis.cancel()
+      stopText()
       this.speaking = false
+    },
+    /* 音色设置弹窗 */
+    openTtsSettings() {
+      this.ttsForm = this.ttsCfg
+        ? { ...this.ttsCfg }
+        : { appid: '', token: '', cluster: 'volcano_tts', voice: DOUBAO_VOICES[0].id }
+      this.showTtsSettings = true
+    },
+    saveTts() {
+      saveTtsConfig({ ...this.ttsForm })
+      this.ttsCfg = loadTtsConfig()
+      this.showTtsSettings = false
+    },
+    clearTts() {
+      saveTtsConfig(null)
+      this.ttsCfg = null
+      this.showTtsSettings = false
     }
   }
 }
@@ -849,13 +1102,88 @@ export default {
   transition: none;
   z-index: 9999;
 }
-.floating-avatar img {
+.xy-anim {
+  height: 100%;
+  width: auto;
+  transform-origin: 50% 92%;
+  line-height: 0;
+}
+.xy-anim img {
   height: 100%;
   width: auto;
   max-width: 220px;
   object-fit: contain;
   display: block;
   pointer-events: none;
+  animation: xy-breathe 3.4s ease-in-out infinite;
+}
+/* 呼吸起伏 */
+@keyframes xy-breathe {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(3px); }
+}
+/* 点头 / 歪头 / 说话点头 / 倾听前倾（作用于整体，不改形象） */
+.xy-anim.nod { animation: xy-nod 0.9s ease-in-out 1; }
+.xy-anim.tilt { animation: xy-tilt 1.1s ease-in-out 1; }
+.xy-anim.talking { animation: xy-nod-slow 1.5s ease-in-out infinite; }
+.xy-anim.listening { transform: rotate(5deg); }
+@keyframes xy-nod {
+  0%, 100% { transform: rotate(0) translateY(0); }
+  30%      { transform: rotate(3deg) translateY(3px); }
+  65%      { transform: rotate(-1.5deg) translateY(0); }
+}
+@keyframes xy-nod-slow {
+  0%, 100% { transform: rotate(0) translateY(0); }
+  40%      { transform: rotate(2.5deg) translateY(2px); }
+  70%      { transform: rotate(-1deg) translateY(0); }
+}
+@keyframes xy-tilt {
+  0%, 100% { transform: rotate(0); }
+  45%      { transform: rotate(7deg); }
+}
+/* 录音声波指示条 */
+.xy-soundbars {
+  position: absolute;
+  top: 24%;
+  right: -2px;
+  display: flex;
+  gap: 3px;
+  align-items: flex-end;
+  height: 22px;
+}
+.xy-soundbars i {
+  width: 4px;
+  border-radius: 2px;
+  background: #6fbf9a;
+  transform-origin: bottom;
+  animation: xy-bar 0.9s ease-in-out infinite;
+}
+.xy-soundbars i:nth-child(1) { height: 10px; }
+.xy-soundbars i:nth-child(2) { height: 18px; animation-delay: 0.15s; }
+.xy-soundbars i:nth-child(3) { height: 13px; animation-delay: 0.3s; }
+@keyframes xy-bar {
+  0%, 100% { transform: scaleY(0.4); }
+  50%      { transform: scaleY(1); }
+}
+/* AI 思考气泡 */
+.xy-think-bubble {
+  position: absolute;
+  top: -2px;
+  right: 14px;
+  background: #fff;
+  border: 1.5px solid #cfe0d6;
+  color: #7fc8a9;
+  border-radius: 12px;
+  padding: 2px 8px;
+  font-size: 13px;
+  letter-spacing: 2px;
+  line-height: 1.4;
+  box-shadow: 0 2px 8px rgba(47, 93, 80, 0.12);
+  animation: xy-think-bubble 1s ease-in-out infinite alternate;
+}
+@keyframes xy-think-bubble {
+  from { transform: translateY(0); opacity: 0.75; }
+  to   { transform: translateY(-3px); opacity: 1; }
 }
 .floating-avatar:hover {
   transform: translateY(-2px) scale(1.03);
@@ -897,24 +1225,21 @@ export default {
 .floating-badge.rec { background: #c0392b; color: #fff; }
 .floating-badge.dot { background: #e74c3c; }
 
-/* ===== 聊天面板（桌面端） ===== */
+/* ===== 数字人工作台（桌面端三栏） ===== */
 .chat-panel {
   position: fixed;
-  right: 28px;
-  bottom: 28px;
-  width: 400px;
-  height: 560px;
-  background: #fff;
-  border-radius: 18px;
+  right: 24px;
+  bottom: 24px;
+  width: min(1060px, calc(100vw - 48px));
+  height: min(640px, calc(100vh - 48px));
+  background: #f4f8f5;
+  border-radius: 16px;
   box-shadow: 0 18px 50px rgba(47, 93, 80, 0.22);
   border: 1px solid #e3ece7;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   z-index: 300;
-  /* 拖到自定义位置时保持大小 */
-  min-width: 400px;
-  min-height: 560px;
 }
 .chat-fade-enter-active,
 .chat-fade-leave-active {
@@ -930,7 +1255,7 @@ export default {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 14px;
+  padding: 10px 16px;
   background: linear-gradient(135deg, #2f5d50, #3e7a68);
   color: #fff;
   flex-shrink: 0;
@@ -940,6 +1265,10 @@ export default {
 .chat-head.drag {
   cursor: grabbing;
   transition: none;
+}
+.head-ico {
+  font-size: 22px;
+  line-height: 1;
 }
 .drag-hint {
   opacity: 0.75;
@@ -952,17 +1281,9 @@ export default {
   align-items: center;
   gap: 10px;
 }
-.chat-head-avatar {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 2px solid rgba(255,255,255,0.6);
-  background: #fff;
-}
 .chat-head-name {
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 700;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -970,13 +1291,6 @@ export default {
 .chat-head-sub {
   font-size: 12px;
   opacity: 0.85;
-}
-.online-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #4ade80;
-  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.4);
 }
 .chat-close {
   width: 30px;
@@ -990,18 +1304,230 @@ export default {
 }
 .chat-close:hover { background: rgba(255,255,255,0.35); }
 
-.chat-status {
-  padding: 6px 14px;
+/* 三栏布局 */
+.dh-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 236px 1fr 226px;
+  gap: 10px;
+  padding: 10px;
+}
+
+/* ===== 左栏：数字人形象 ===== */
+.dh-left {
+  background: #fff;
+  border: 1px solid #e3ece7;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.dh-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
   background: #f0f6f2;
+  color: #2f5d50;
+  font-size: 13px;
+  font-weight: 700;
+  border-bottom: 1px solid #e3ece7;
+  flex-shrink: 0;
+}
+.dh-online {
+  background: #2f5d50;
+  color: #fff;
+  font-size: 11px;
+  padding: 1px 9px;
+  border-radius: 10px;
+  font-weight: 400;
+}
+.dh-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: radial-gradient(circle at 50% 28%, #f4faf6, #e2efe7);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  overflow: hidden;
+}
+.dh-stage .xy-anim {
+  position: relative;
+  max-height: 96%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+/* 严格收缩包裹图片的容器：嘴贴片的百分比坐标以实际图片渲染盒为基准 */
+.dh-stage .xy-fig {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  animation: xy-breathe 3.4s ease-in-out infinite;
+}
+.dh-stage .xy-fig img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 196px;
+  max-height: 52vh;
+  pointer-events: none;
+  animation: none;
+}
+/* 讲话视频合成层：按「头顶对齐」参数定位（相对 PNG 渲染盒）
+   left -3.13% / top 2.88% / 宽 104.8% / 高 67.1%，裙摆区由下层立绘补全 */
+.dh-stage .xy-fig .xy-talk {
+  position: absolute;
+  left: -3.13%;
+  top: 2.88%;
+  width: 104.8%;
+  height: 67.1%;
+  pointer-events: none;
+  z-index: 2;
+}
+/* 隐藏的视频源：仍需参与解码供 canvas 绘制 */
+.dh-stage .xy-fig .xy-talk-src {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+.dh-stage-tag {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(47, 93, 80, 0.92);
+  color: #fff;
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+.dh-stage-tag.rec { background: rgba(192, 57, 43, 0.94); }
+.dh-stage-tag.think { background: rgba(62, 122, 104, 0.94); }
+.dh-ctrl {
+  padding: 8px 10px 10px;
+  border-top: 1px solid #e3ece7;
+  background: #fff;
+  flex-shrink: 0;
+}
+.dh-opacity-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #5a6b62;
+}
+.dh-range {
+  flex: 1;
+  min-width: 0;
+  accent-color: #2f5d50;
+}
+.dh-ctrl-val {
+  width: 36px;
+  text-align: right;
+  font-size: 11px;
+  color: #8a9b93;
+}
+.dh-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.dh-act-btn {
+  flex: 1;
+  padding: 6px 0;
+  border: 1px solid #d8e3dd;
+  background: #fff;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #2f5d50;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.dh-act-btn:hover { background: #eef6f1; }
+
+/* ===== 中栏：对话主区 ===== */
+.dh-main {
+  background: #fff;
+  border: 1px solid #e3ece7;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+.dh-main-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #f0f6f2;
+  border-bottom: 1px solid #e3ece7;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.dh-main-title {
+  font-weight: 700;
+  color: #2f5d50;
+  font-size: 14px;
+}
+.dh-conn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: #2f5d50;
+}
+.dh-conn .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.35);
+}
+.dh-main-tools {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+.dh-tool {
+  border: 1px solid #d8e3dd;
+  background: #fff;
+  color: #5a6b62;
+  border-radius: 14px;
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.dh-tool.on {
+  background: #2f5d50;
+  border-color: #2f5d50;
+  color: #fff;
+}
+.dh-tool:hover:not(.on) { background: #eef6f1; }
+
+.dh-status {
+  padding: 6px 12px;
+  background: #f4f8f5;
   color: #5a6b62;
   font-size: 12px;
   flex-shrink: 0;
+  border-bottom: 1px dashed #d8e8df;
 }
 
 .chat-body {
   flex: 1;
   overflow-y: auto;
-  padding: 14px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1043,48 +1569,75 @@ export default {
   border-top-right-radius: 4px;
 }
 .msg-bubble.interim {
-  background: #eef2ef;
+  background: #f0f4f1;
   color: #8a9b93;
   font-style: italic;
 }
 
-.quick-topics {
+/* ===== 右栏：辅助信息 ===== */
+.dh-right {
   display: flex;
-  gap: 6px;
-  padding: 8px 12px;
-  overflow-x: auto;
-  background: #fff;
-  border-top: 1px solid #eef2ef;
-  border-bottom: 1px solid #eef2ef;
-  flex-shrink: 0;
-  -webkit-overflow-scrolling: touch;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
 }
-.topic-chip {
+.dh-side-card {
+  background: #fff;
+  border: 1px solid #e3ece7;
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.dh-side-card.grow {
+  flex: 1;
+  overflow: hidden;
+}
+.dh-side-head {
+  font-size: 13px;
+  font-weight: 700;
+  color: #2f5d50;
+  margin-bottom: 8px;
   flex-shrink: 0;
-  padding: 6px 12px;
+}
+.dh-topics {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.dh-topic {
+  text-align: left;
+  padding: 7px 10px;
   border: 1px solid #d8e3dd;
   background: #fff;
-  border-radius: 16px;
+  border-radius: 8px;
   font-size: 12px;
   color: #2f5d50;
   cursor: pointer;
-  white-space: nowrap;
+  transition: all 0.15s;
+  flex-shrink: 0;
 }
-.topic-chip:hover { background: #eef6f1; }
+.dh-topic:hover {
+  background: #eef6f1;
+  border-color: #bfe0cf;
+}
+.dh-tips {
+  margin: 0;
+  padding-left: 16px;
+  color: #5a6b62;
+  font-size: 12px;
+  line-height: 1.9;
+}
+.dh-status-line {
+  font-size: 12px;
+  color: #2f5d50;
+}
 
 /* ===== 图片上传相关 ===== */
 .hidden-file-input { display: none; }
-.pic-btn {
-  width: 38px; height: 38px;
-  border: none; background: transparent;
-  font-size: 22px; cursor: pointer;
-  border-radius: 8px;
-  display: flex; align-items: center; justify-content: center;
-  transition: background .15s;
-  flex-shrink: 0;
-}
-.pic-btn:hover:not(:disabled) { background: #eef6f1; }
-.pic-btn:disabled { opacity: .5; cursor: not-allowed; }
 
 .pending-image-row {
   display: flex; align-items: center; gap: 10px;
@@ -1121,87 +1674,224 @@ export default {
   cursor: zoom-in;
 }
 
-.chat-input-bar {
-  display: flex;
-  gap: 8px;
-  padding: 10px 12px;
-  background: #fff;
-  flex-shrink: 0;
-  align-items: center;
-}
-.mic-btn {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  border: 1px solid #2f5d50;
-  background: #fff;
-  color: #2f5d50;
-  cursor: pointer;
-  font-size: 16px;
-  flex-shrink: 0;
-  transition: all 0.18s;
-}
-.mic-btn.recording {
-  background: #c0392b;
-  border-color: #c0392b;
-  color: #fff;
-  animation: rec-pulse 1.2s infinite;
-}
-.mic-btn.disabled { opacity: 0.5; cursor: not-allowed; }
-.chat-input {
-  flex: 1;
-  min-width: 0;
-  height: 38px;
-  padding: 0 12px;
+/* ===== 语音识别结果 / 输入面板 ===== */
+.dh-asr {
+  margin: 0 12px 8px;
   border: 1px solid #d8e3dd;
   border-radius: 10px;
-  font-size: 14px;
-  outline: none;
+  background: #fff;
+  flex-shrink: 0;
+  transition: box-shadow 0.2s, border-color 0.2s;
 }
-.chat-input:focus { border-color: #7fc8a9; }
-.chat-input.recording {
+.dh-asr.active {
   border-color: #c0392b;
-  background: #fef5f4;
-  animation: rec-input-pulse 1.2s infinite;
+  box-shadow: 0 0 0 3px rgba(192, 57, 43, 0.12);
 }
-@keyframes rec-input-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(192,57,43,0); }
-  50%      { box-shadow: 0 0 0 3px rgba(192,57,43,0.15); }
+.dh-asr-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  background: #f0f6f2;
+  border-bottom: 1px solid #e3ece7;
+  font-size: 12px;
+  color: #2f5d50;
+  border-radius: 9px 9px 0 0;
 }
-.send-btn {
-  padding: 0 16px;
-  height: 38px;
+.dh-asr-tools {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.dh-mini {
   border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: #5a6b62;
+}
+.dh-mini:hover:not(:disabled) { background: #e3ece7; }
+.dh-mini:disabled { opacity: 0.5; cursor: not-allowed; }
+.dh-asr-text {
+  display: block;
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  background: transparent;
+  color: #2f4a3e;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+/* ===== 主操作按钮 ===== */
+.dh-btn-row {
+  display: flex;
+  gap: 10px;
+  padding: 0 12px 12px;
+  flex-shrink: 0;
+}
+.dh-btn {
+  flex: 1;
+  height: 44px;
+  border: none;
+  border-radius: 22px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: filter 0.15s;
+  font-family: inherit;
+}
+.dh-btn.rec {
+  background: #5d8a6d;
+  color: #fff;
+}
+.dh-btn.rec.stop {
+  background: #c0392b;
+  animation: rec-btn-pulse 1.2s infinite;
+}
+.dh-btn.rec.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.dh-btn.send {
   background: #2f5d50;
   color: #fff;
-  border-radius: 10px;
-  cursor: pointer;
-  font-size: 14px;
-  flex-shrink: 0;
 }
-.send-btn:hover { background: #3e7a68; }
+.dh-btn:hover:not(:disabled) { filter: brightness(1.08); }
+.dh-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+@keyframes rec-btn-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(192, 57, 43, 0.35); }
+  50%      { box-shadow: 0 0 0 6px rgba(192, 57, 43, 0.08); }
+}
 
-.chat-footer {
+/* ===== 豆包 TTS 音色设置浮层 ===== */
+.tts-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(31, 54, 46, 0.35);
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 12px 10px;
-  background: #fff;
-  flex-shrink: 0;
+  justify-content: center;
+  z-index: 400;
 }
-.switch { font-size: 12px; color: #5a6b62; display: flex; align-items: center; gap: 4px; }
-.mini-btn {
-  padding: 4px 10px;
-  border: 1px solid #d8e3dd;
+.tts-pop {
+  width: 290px;
   background: #fff;
-  color: #5a6b62;
-  border-radius: 6px;
+  border: 1px solid #e3ece7;
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: 0 10px 30px rgba(47, 93, 80, 0.25);
+}
+.tts-pop-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 700;
+  color: #2f5d50;
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+.tts-close {
+  border: none;
+  background: #f0f6f2;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
   cursor: pointer;
+  color: #5a6b62;
   font-size: 12px;
 }
-.mini-btn:hover { background: #f0f6f2; }
+.tts-close:hover { background: #e3ece7; }
+.tts-tip {
+  font-size: 11px;
+  color: #8a9b93;
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+.tts-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #5a6b62;
+}
+.tts-field span { width: 78px; flex-shrink: 0; }
+.tts-field input,
+.tts-field select {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  border: 1px solid #d8e3dd;
+  border-radius: 8px;
+  padding: 0 8px;
+  font-size: 12px;
+  outline: none;
+  color: #2f4a3e;
+  background: #fff;
+  font-family: inherit;
+}
+.tts-field input:focus,
+.tts-field select:focus { border-color: #7fc8a9; }
+.tts-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.tts-btn {
+  flex: 1;
+  height: 32px;
+  border-radius: 16px;
+  border: none;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.tts-btn.primary { background: #2f5d50; color: #fff; }
+.tts-btn.primary:hover { filter: brightness(1.1); }
+.tts-btn.ghost {
+  background: #fff;
+  border: 1px solid #d8e3dd;
+  color: #5a6b62;
+}
+.tts-btn.ghost:hover { background: #eef6f1; }
 
-/* ===== 手机适配 ===== */
+/* ===== 响应式适配 ===== */
+@media (max-width: 1150px) {
+  .dh-layout { grid-template-columns: 216px 1fr; }
+  .dh-right { display: none; }
+}
+@media (max-width: 860px) {
+  .dh-layout { grid-template-columns: 1fr; padding: 8px; }
+  .dh-left { display: none; }
+  .chat-panel {
+    right: 0;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    height: calc(100vh - 54px);
+    max-height: none;
+    border-radius: 16px 16px 0 0;
+    border: none;
+    box-shadow: 0 -8px 30px rgba(47, 93, 80, 0.18);
+  }
+  .chat-head { padding: 10px 12px; }
+  .chat-body { padding: 10px; }
+  .msg-bubble { font-size: 13px; }
+  .dh-btn { height: 40px; font-size: 13px; }
+}
 @media (max-width: 768px) {
   .floating-avatar {
     right: 16px;
@@ -1209,20 +1899,6 @@ export default {
     height: 216px;
     max-height: 220px;
   }
-  .floating-avatar img { max-width: 184px; }
-  .chat-panel {
-    right: 0;
-    left: 0;
-    bottom: 0;
-    width: 100%;
-    height: calc(100vh - 54px);
-    max-height: 800px;
-    border-radius: 18px 18px 0 0;
-    border: none;
-    box-shadow: 0 -8px 30px rgba(47,93,80,0.18);
-  }
-  .chat-head { padding: 10px 12px; }
-  .chat-body { padding: 12px; }
-  .msg-bubble { font-size: 13px; }
+  .xy-anim img { max-width: 184px; }
 }
 </style>
